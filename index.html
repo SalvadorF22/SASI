@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Painel do Estafeta</title>
+    <style>
+        body { font-family: Arial, sans-serif; text-align: center; margin-top: 30px; background-color: #f4f4f9; }
+        .card { background: white; padding: 20px; margin: 20px auto; width: 90%; max-width: 400px; border-radius: 8px; box-shadow: 0px 0px 10px rgba(0,0,0,0.1); }
+        input, button { padding: 10px; margin: 10px 0; width: 80%; font-size: 16px; border-radius: 5px; border: 1px solid #ccc; }
+        button { background-color: #4CAF50; color: white; border: none; cursor: pointer; }
+        button:hover { background-color: #45a049; }
+        #status { font-size: 14px; color: #666; }
+    </style>
+</head>
+<body>
+
+    <h2>Painel de Controlo - Estafeta</h2>
+
+    <!-- Bloco de Rastreio GPS -->
+    <div class="card">
+        <h3>Rastreio GPS em Tempo Real</h3>
+        <p id="status">A aguardar sinal de GPS...</p>
+    </div>
+
+    <!-- Bloco para Marcar Encomenda como Entregue -->
+    <div class="card">
+        <h3>Marcar Encomenda Entregue</h3>
+        <input type="number" id="idEncomenda" placeholder="ID da Encomenda (ex: 6)">
+        <br>
+        <button onclick="marcarComoEntregue()">Concluir Encomenda</button>
+    </div>
+
+    <script>
+        // Substitui pelos dados reais do teu projeto Supabase
+        const SUPABASE_URL = "https://fypbjfcjipomotgyajlt.supabase.co";
+        const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ5cGJqZmNqaXBvbW90Z3lhamx0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTE0NjQwMzAsImV4cCI6MjEwNzA0MDAzMH0.F3NJsCTS9002ieSWCXXugt3Fe5wJdVGzlCnLhp6Ot6I";
+
+        // --- 1. RASTREIO GPS (Envia a cada 3 minutos) ---
+        function enviarLocalizacao() {
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(async (position) => {
+                    const lat = position.coords.latitude;
+                    const lon = position.coords.longitude;
+
+                    try {
+                        const response = await fetch(`${SUPABASE_URL}/rest/v1/DriverLocation?id=eq.1`, {
+                            method: 'PATCH',
+                            headers: {
+                                'apikey': SUPABASE_ANON_KEY,
+                                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                                'Content-Type': 'application/json',
+                                'Prefer': 'return=minimal'
+                            },
+                            body: JSON.stringify({ latitude: lat, longitude: lon })
+                        });
+                        
+                        if (response.ok) {
+                            document.getElementById("status").innerText = `GPS Ativo! Última atualização: ${new Date().toLocaleTimeString()}`;
+                        }
+                    } catch (error) {
+                        console.error("Erro ao enviar localização:", error);
+                    }
+                }, (error) => {
+                    document.getElementById("status").innerText = "Erro no GPS: " + error.message;
+                }, {
+                    enableHighAccuracy: true
+                });
+            } else {
+                document.getElementById("status").innerText = "Geolocalização não suportada.";
+            }
+        }
+
+        // Inicia o GPS de imediato e repete a cada 3 minutos (180000 ms)
+        enviarLocalizacao();
+        setInterval(enviarLocalizacao, 180000);
+
+        // --- 2. MARCAR ENCOMENDA COMO ENTREGUE ---
+        async function marcarComoEntregue() {
+            const id = document.getElementById("idEncomenda").value;
+            
+            if (!id) {
+                alert("Por favor, insere o ID da encomenda.");
+                return;
+            }
+
+            try {
+                // Altera o campo Delivered para true na tabela CompletedOrders
+                const response = await fetch(`${SUPABASE_URL}/rest/v1/CompletedOrders?id=eq.${id}`, {
+                    method: 'PATCH',
+                    headers: {
+                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                        'Content-Type': 'application/json',
+                        'Prefer': 'return=minimal'
+                    },
+                    body: JSON.stringify({
+                        Delivered: true
+                    })
+                });
+
+                if (response.ok) {
+                    alert(`Encomenda #${id} marcada como entregue com sucesso!`);
+                    document.getElementById("idEncomenda").value = "";
+                } else {
+                    alert("Erro ao atualizar. Confirma se o ID existe na tabela CompletedOrders.");
+                }
+            } catch (error) {
+                console.error("Erro de conexão:", error);
+                alert("Erro de ligação à base de dados.");
+            }
+        }
+    </script>
+</body>
+</html>
