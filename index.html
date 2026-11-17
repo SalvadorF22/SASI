@@ -3,113 +3,271 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Painel do Estafeta</title>
+    <title>Rota de Entregas - Estafeta</title>
+    <!-- CSS do Mapa Leaflet -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
-        body { font-family: Arial, sans-serif; text-align: center; margin-top: 30px; background-color: #f4f4f9; }
-        .card { background: white; padding: 20px; margin: 20px auto; width: 90%; max-width: 400px; border-radius: 8px; box-shadow: 0px 0px 10px rgba(0,0,0,0.1); }
-        input, button { padding: 10px; margin: 10px 0; width: 80%; font-size: 16px; border-radius: 5px; border: 1px solid #ccc; }
-        button { background-color: #4CAF50; color: white; border: none; cursor: pointer; }
-        button:hover { background-color: #45a049; }
-        #status { font-size: 14px; color: #666; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 0; background: #f4f4f9; }
+        #header { background: #1e293b; color: white; padding: 12px 16px; display: flex; justify-content: space-between; align-items: center; }
+        #header h2 { margin: 0; font-size: 18px; }
+        #gps-status { font-size: 12px; color: #38bdf8; }
+        #map { height: 52vh; width: 100%; border-bottom: 2px solid #cbd5e1; }
+        #lista-entregas { padding: 15px; max-width: 600px; margin: auto; }
+        .card-entrega { background: white; padding: 14px; margin-bottom: 12px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.08); display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+        .info-entrega strong { display: block; color: #0f172a; font-size: 15px; margin-bottom: 4px; }
+        .info-entrega span { font-size: 13px; color: #475569; }
+        .btn-entregar { background: #16a34a; color: white; border: none; padding: 10px 14px; border-radius: 6px; font-weight: bold; cursor: pointer; white-space: nowrap; }
+        .btn-entregar:hover { background: #15803d; }
+        .aviso-vazio { text-align: center; color: #64748b; padding: 20px; }
     </style>
 </head>
 <body>
 
-    <h2>Painel de Controlo - Estafeta</h2>
-
-    <!-- Bloco de Rastreio GPS -->
-    <div class="card">
-        <h3>Rastreio GPS em Tempo Real</h3>
-        <p id="status">A aguardar sinal de GPS...</p>
+    <div id="header">
+        <h2>Painel de Rota</h2>
+        <span id="gps-status">A iniciar GPS...</span>
     </div>
 
-    <!-- Bloco para Marcar Encomenda como Entregue -->
-    <div class="card">
-        <h3>Marcar Encomenda Entregue</h3>
-        <input type="number" id="idEncomenda" placeholder="ID da Encomenda (ex: 6)">
-        <br>
-        <button onclick="marcarComoEntregue()">Concluir Encomenda</button>
+    <!-- Contentor do Mapa -->
+    <div id="map"></div>
+
+    <!-- Lista de Entregas Pendentes -->
+    <div id="lista-entregas">
+        <h3>Paragens para Amanhã</h3>
+        <div id="contentor-cards"><p class="aviso-vazio">A carregar entregas...</p></div>
     </div>
 
+    <!-- JS do Mapa Leaflet -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script>
-        // Substitui pelos dados reais do teu projeto Supabase
-        const SUPABASE_URL = "https://fypbjfcjipomotgyajlt.supabase.co";
-        const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ5cGJqZmNqaXBvbW90Z3lhamx0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTE0NjQwMzAsImV4cCI6MjEwNzA0MDAzMH0.F3NJsCTS9002ieSWCXXugt3Fe5wJdVGzlCnLhp6Ot6I";
+        // ================= CONFIGURAÇÕES =================
+        const SUPABASE_URL = "https://o-teu-projeto.supabase.co";
+        const SUPABASE_ANON_KEY = "TUA_SUPABASE_ANON_KEY";
+        const ORS_API_KEY = "A_TUA_CHAVE_OPENROUTESERVICE";
 
-        // --- 1. RASTREIO GPS (Envia a cada 3 minutos) ---
-        function enviarLocalizacao() {
-            if (navigator.geolocation) {
-                navigator.geolocation.getCurrentPosition(async (position) => {
-                    const lat = position.coords.latitude;
-                    const lon = position.coords.longitude;
+        // Coordenadas fixas de fallback e destino final [Longitude, Latitude]
+        let pontoInicial = [-8.6800, 39.2300];
+        const pontoFinal = [-8.934784129073792, 39.33927621252411];
+        // =================================================
 
-                    try {
-                        const response = await fetch(`${SUPABASE_URL}/rest/v1/DriverLocation?id=eq.1`, {
-                            method: 'PATCH',
-                            headers: {
-                                'apikey': SUPABASE_ANON_KEY,
-                                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                                'Content-Type': 'application/json',
-                                'Prefer': 'return=minimal'
-                            },
-                            body: JSON.stringify({ latitude: lat, longitude: lon })
-                        });
-                        
-                        if (response.ok) {
-                            document.getElementById("status").innerText = `GPS Ativo! Última atualização: ${new Date().toLocaleTimeString()}`;
+        // Inicializar o Mapa centrado em Portugal
+        const map = L.map('map').setView([pontoInicial[1], pontoInicial[0]], 12);
+        L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', {
+            attribution: 'Tiles &copy; Esri'
+        }).addTo(map);
+
+        // Camada para limpar e redesenhar marcadores/linhas facilmente
+        let camadaRota = L.layerGroup().addTo(map);
+
+        // --- FUNÇÕES MATEMÁTICAS DE OTIMIZAÇÃO (Nearest Neighbor + 2-opt) ---
+        function calcularDistancia(p1, p2) {
+            return Math.hypot(p1[0] - p2[0], p1[1] - p2[1]);
+        }
+
+        function distanciaTotal(rota) {
+            let dist = 0;
+            for (let i = 0; i < rota.length - 1; i++) {
+                dist += calcularDistancia(rota[i].coords, rota[i + 1].coords);
+            }
+            return dist;
+        }
+
+        function otimizar2Opt(rotaInicial) {
+            if (rotaInicial.length <= 4) return rotaInicial;
+            let melhorRota = [...rotaInicial];
+            let melhorDist = distanciaTotal(melhorRota);
+            let melhoria = true;
+
+            while (melhoria) {
+                melhoria = false;
+                for (let i = 1; i < melhorRota.length - 2; i++) {
+                    for (let j = i + 1; j < melhorRota.length - 1; j++) {
+                        const segmentoInvertido = melhorRota.slice(i, j + 1).reverse();
+                        const novaRota = [...melhorRota.slice(0, i), ...segmentoInvertido, ...melhorRota.slice(j + 1)];
+                        const novaDist = distanciaTotal(novaRota);
+                        if (novaDist < melhorDist) {
+                            melhorRota = novaRota;
+                            melhorDist = novaDist;
+                            melhoria = true;
                         }
-                    } catch (error) {
-                        console.error("Erro ao enviar localização:", error);
                     }
-                }, (error) => {
-                    document.getElementById("status").innerText = "Erro no GPS: " + error.message;
-                }, {
-                    enableHighAccuracy: true
-                });
+                }
+            }
+            return melhorRota;
+        }
+
+        // --- GEOCODIFICAÇÃO DE MORADAS ---
+        async function obterCoordenadas(endereco) {
+            // Verifica se já são coordenadas "lat, lon"
+            if (endereco.includes(",") && /\d/.test(endereco)) {
+                const partes = endereco.split(",");
+                const lat = parseFloat(partes[0].trim());
+                const lon = parseFloat(partes[1].trim());
+                if (!isNaN(lat) && !isNaN(lon)) return [lon, lat];
+            }
+            // Caso contrário, usa a API do OpenRouteService
+            const url = `https://api.openrouteservice.org/geocode/search?api_key=${ORS_API_KEY}&text=${encodeURIComponent(endereco)}&boundary.country=PT`;
+            const resp = await fetch(url);
+            if (resp.ok) {
+                const data = await resp.json();
+                if (data.features && data.features.length > 0) {
+                    return data.features[0].geometry.coordinates;
+                }
+            }
+            return null;
+        }
+
+        // --- ATUALIZAR GPS E RECALCULAR ROTA ---
+        function atualizarSistema() {
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(async (pos) => {
+                    const lat = pos.coords.latitude;
+                    const lon = pos.coords.longitude;
+                    pontoInicial = [lon, lat];
+
+                    document.getElementById("gps-status").innerText = `GPS: ${new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}`;
+
+                    // Envia posição atual para o Supabase (DriverLocation)
+                    fetch(`${SUPABASE_URL}/rest/v1/DriverLocation?id=eq.1`, {
+                        method: 'PATCH',
+                        headers: {
+                            'apikey': SUPABASE_ANON_KEY,
+                            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                            'Content-Type': 'application/json',
+                            'Prefer': 'return=minimal'
+                        },
+                        body: JSON.stringify({ latitude: lat, longitude: lon })
+                    }).catch(err => console.error("Erro GPS Supabase:", err));
+
+                    await carregarERenderizarRota();
+                }, async (err) => {
+                    document.getElementById("gps-status").innerText = "GPS indisponível (A usar base)";
+                    await carregarERenderizarRota();
+                }, { enableHighAccuracy: true });
             } else {
-                document.getElementById("status").innerText = "Geolocalização não suportada.";
+                carregarERenderizarRota();
             }
         }
 
-        // Inicia o GPS de imediato e repete a cada 3 minutos (180000 ms)
-        enviarLocalizacao();
-        setInterval(enviarLocalizacao, 180000);
+        // --- BUSCAR ENCOMENDAS E DESENHAR NO MAPA ---
+        async function carregarERenderizarRota() {
+            const contentor = document.getElementById("contentor-cards");
 
-        // --- 2. MARCAR ENCOMENDA COMO ENTREGUE ---
-        async function marcarComoEntregue() {
-            const id = document.getElementById("idEncomenda").value;
-            
-            if (!id) {
-                alert("Por favor, insere o ID da encomenda.");
+            // Calcular data de amanhã
+            const amanha = new Date();
+            amanha.setDate(amanha.getDate() + 1);
+            const d1 = `${String(amanha.getDate()).padStart(2, '0')}/${String(amanha.getMonth() + 1).padStart(2, '0')}/${amanha.getFullYear()}`;
+            const d2 = `${amanha.getDate()}/${amanha.getMonth() + 1}/${amanha.getFullYear()}`;
+
+            // Buscar encomendas pendentes (Delivered = false)
+            const resp = await fetch(`${SUPABASE_URL}/rest/v1/CompletedOrders?Delivered=eq.false&select=id,Address,Date`, {
+                headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${SUPABASE_ANON_KEY}` }
+            });
+            const encomendas = await resp.json();
+
+            let paragens = [];
+            for (const enc of encomendas) {
+                const dataEnc = String(enc.Date || "").trim();
+                const morada = String(enc.Address || "").trim();
+                if ((dataEnc === d1 || dataEnc === d2) && morada && morada !== "Não especificado") {
+                    const coords = await obterCoordenadas(morada);
+                    if (coords) {
+                        paragens.push({ id: enc.id, address: morada, coords: coords });
+                    }
+                }
+            }
+
+            camadaRota.clearLayers();
+            contentor.innerHTML = "";
+
+            // Marcador da Carrinha (Ponto Inicial)
+            L.marker([pontoInicial[1], pontoInicial[0]]).addTo(camadaRota).bindPopup("<b>Carrinha (Posição Atual)</b>");
+
+            if (paragens.length === 0) {
+                contentor.innerHTML = `<p class="aviso-vazio">Todas as entregas para amanhã foram concluídas!</p>`;
+                map.setView([pontoInicial[1], pontoInicial[0]], 13);
                 return;
             }
 
-            try {
-                // Altera o campo Delivered para true na tabela CompletedOrders
-                const response = await fetch(`${SUPABASE_URL}/rest/v1/CompletedOrders?id=eq.${id}`, {
-                    method: 'PATCH',
-                    headers: {
-                        'apikey': SUPABASE_ANON_KEY,
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                        'Content-Type': 'application/json',
-                        'Prefer': 'return=minimal'
-                    },
-                    body: JSON.stringify({
-                        Delivered: true
-                    })
-                });
+            // 1. Nearest Neighbor
+            let rotaNN = [{ coords: pontoInicial }];
+            let atual = pontoInicial;
+            let restantes = [...paragens];
 
-                if (response.ok) {
-                    alert(`Encomenda #${id} marcada como entregue com sucesso!`);
-                    document.getElementById("idEncomenda").value = "";
-                } else {
-                    alert("Erro ao atualizar. Confirma se o ID existe na tabela CompletedOrders.");
-                }
-            } catch (error) {
-                console.error("Erro de conexão:", error);
-                alert("Erro de ligação à base de dados.");
+            while (restantes.length > 0) {
+                restantes.sort((a, b) => calcularDistancia(atual, a.coords) - calcularDistancia(atual, b.coords));
+                const proximo = restantes.shift();
+                rotaNN.push(proximo);
+                atual = proximo.coords;
+            }
+            rotaNN.push({ coords: pontoFinal });
+
+            // 2. Otimização 2-opt
+            const rotaOtimizada = otimizar2Opt(rotaNN);
+            const clientesOrdenados = rotaOtimizada.slice(1, -1);
+
+            // Desenhar marcadores e criar cards na lista por ordem otimizada
+            clientesOrdenados.forEach((item, index) => {
+                L.marker([item.coords[1], item.coords[0]])
+                    .addTo(camadaRota)
+                    .bindPopup(`<b>Paragem #${index + 1} (Encomenda #${item.id})</b><br>${item.address}`);
+
+                contentor.innerHTML += `
+                    <div class="card-entrega">
+                        <div class="info-entrega">
+                            <strong>#${index + 1} — Encomenda #${item.id}</strong>
+                            <span>${item.address}</span>
+                        </div>
+                        <button class="btn-entregar" onclick="marcarEntregue(${item.id})">Entregue</button>
+                    </div>
+                `;
+            });
+
+            // Marcador Destino Final
+            L.marker([pontoFinal[1], pontoFinal[0]]).addTo(camadaRota).bindPopup("<b>Destino Final</b>");
+
+            // Pedir trajeto real ao OpenRouteService
+            const coordenadasORS = rotaOtimizada.map(p => p.coords);
+            const respORS = await fetch("https://api.openrouteservice.org/v2/directions/driving-car/geojson", {
+                method: "POST",
+                headers: { 'Authorization': ORS_API_KEY, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ coordinates: coordenadasORS })
+            });
+
+            if (respORS.ok) {
+                const geoData = await respORS.json();
+                const coordsLinha = geoData.features[0].geometry.coordinates.map(c => [c[1], c[0]]);
+                const linhaAzul = L.polyline(coordsLinha, { color: '#2563eb', weight: 5 }).addTo(camadaRota);
+                map.fitBounds(linhaAzul.getBounds(), { padding: [30, 30] });
             }
         }
+
+        // --- MARCAR ENCOMENDA COMO ENTREGUE ---
+        async function marcarEntregue(id) {
+            if (!confirm(`Confirmar entrega da encomenda #${id}?`)) return;
+
+            const resp = await fetch(`${SUPABASE_URL}/rest/v1/CompletedOrders?id=eq.${id}`, {
+                method: 'PATCH',
+                headers: {
+                    'apikey': SUPABASE_ANON_KEY,
+                    'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                    'Content-Type': 'application/json',
+                    'Prefer': 'return=minimal'
+                },
+                body: JSON.stringify({ Delivered: true })
+            });
+
+            if (resp.ok) {
+                // Recarrega imediatamente a rota sem a encomenda entregue
+                await carregarERenderizarRota();
+            } else {
+                alert("Erro ao atualizar estado no Supabase.");
+            }
+        }
+
+        // Iniciar ao abrir a página e repetir a cada 3 minutos (180000 ms)
+        atualizarSistema();
+        setInterval(atualizarSistema, 180000);
     </script>
 </body>
 </html>
